@@ -101,6 +101,7 @@ Highlights:
 - Chinese docs: [README.zh-CN.md](./README.zh-CN.md)
 - Getting started: [docs/guide/getting-started.md](./docs/guide/getting-started.md)
 - LinkedIn adapter reference: [docs/adapters/browser/linkedin.md](./docs/adapters/browser/linkedin.md)
+- Release checklist: [docs/developer/releasing.md](./docs/developer/releasing.md)
 
 ## Development
 

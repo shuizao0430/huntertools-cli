@@ -48,6 +48,7 @@ export default defineConfig({
                 { text: 'Contributing', link: '/developer/contributing' },
                 { text: 'Testing', link: '/developer/testing' },
                 { text: 'Architecture', link: '/developer/architecture' },
+                { text: 'Releasing', link: '/developer/releasing' },
               ],
             },
           ],
@@ -118,11 +119,11 @@ export default defineConfig({
       provider: 'local',
     },
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/shuizao0430/opencli' },
+      { icon: 'github', link: 'https://github.com/shuizao0430/huntertools-cli' },
       { icon: 'npm', link: 'https://www.npmjs.com/package/huntertoolscli' },
     ],
     editLink: {
-      pattern: 'https://github.com/shuizao0430/opencli/edit/codex/linkedin-recruiter-workflow/docs/:path',
+      pattern: 'https://github.com/shuizao0430/huntertools-cli/edit/main/docs/:path',
       text: 'Edit this page on GitHub',
     },
     footer: {
