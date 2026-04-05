@@ -1,4 +1,4 @@
-name: "🐛 Bug Report"
+name: "Bug Report"
 description: Report a bug or unexpected behavior in HunterToolsCLI
 title: "[Bug]: "
 labels: ["bug"]
@@ -42,7 +42,7 @@ body:
     attributes:
       label: HunterToolsCLI Version
       description: "Run `huntertools --version` to find out."
-      placeholder: "0.8.0"
+      placeholder: "1.6.1"
     validations:
       required: true
 

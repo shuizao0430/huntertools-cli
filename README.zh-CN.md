@@ -2,16 +2,21 @@
 
 一个面向招聘工作的浏览器自动化 CLI，聚焦 LinkedIn 与 LinkedIn Recruiter。
 
-这个 fork 正在从旧的 OpenCLI 形态收口成一个更专注的招聘运营工具。当前公开支持的主线能力是：
+HunterToolsCLI 现在是一个独立维护的招聘运营工具，核心围绕四条工作流：
 
 - 搜索候选人
 - 读取候选人资料
 - 单发和批量触达
-- inbox 跟进
-- follow-up queue 排序
-- ATS / 表格导出
+- inbox 跟进、优先级排序与导出
 
 默认主命令是 `huntertools`，迁移期内仍兼容 `opencli` 别名。
+
+## 为什么是 HunterToolsCLI
+
+- 产品表面已经收口到招聘工作流
+- 面向真实 Chrome 会话，而不是只做静态 API 包装
+- 覆盖 Recruiter 搜索、资料读取、发信、收件箱、follow-up 和导出
+- 输出结果适合继续流向 ATS 和表格
 
 ## 安装
 
@@ -19,7 +24,17 @@
 npm install -g huntertoolscli
 ```
 
-## 核心命令
+## 快速开始
+
+```bash
+huntertools doctor
+huntertools list
+huntertools linkedin people-search "technical recruiter" --location "Singapore" --limit 5
+huntertools linkedin profile --profile-url "https://www.linkedin.com/talent/profile/..."
+huntertools linkedin follow-up-queue --limit 5 --inbox-limit 10 -f json
+```
+
+## 命令范围
 
 顶层保留命令：
 
@@ -29,7 +44,7 @@ npm install -g huntertoolscli
 - `huntertools daemon`
 - `huntertools completion`
 
-LinkedIn 命令组：
+LinkedIn 工作流：
 
 - `search`
 - `timeline`
@@ -52,15 +67,6 @@ LinkedIn 命令组：
 - `follow-up-batch-reply`
 - `export-follow-up`
 
-## 快速开始
-
-```bash
-huntertools doctor
-huntertools list
-huntertools linkedin people-search "technical recruiter" --location "Singapore" --limit 5
-huntertools linkedin follow-up-queue --limit 5 --inbox-limit 10
-```
-
 ## 浏览器前置条件
 
 - Chrome 正在运行
@@ -68,16 +74,23 @@ huntertools linkedin follow-up-queue --limit 5 --inbox-limit 10
 - Recruiter 工作流需要现成的 LinkedIn Recruiter 登录态
 - 已安装 Browser Bridge 扩展
 
-## 项目方向
+## 首个独立版本
 
-- 第一阶段：完成 HunterToolsCLI 改名并保留兼容别名
-- 第二阶段：把公开 CLI 表面收口到招聘工作流
-- 第三阶段：物理清理仓库里的非招聘适配器和旧文档
+首个独立版本的说明在这里：[RELEASE-v1.6.1.md](./RELEASE-v1.6.1.md)
+
+重点包括：
+
+- 从 OpenCLI 独立为 HunterToolsCLI
+- 公开产品面收口到招聘工作流
+- 保留经过真实生产验证的 LinkedIn / Recruiter 能力
+- 在必要处继续保留兼容层，避免打断迁移
 
 ## 文档
 
 - 英文文档：[docs](./docs)
+- 快速开始：[docs/guide/getting-started.md](./docs/guide/getting-started.md)
 - LinkedIn 说明页：[docs/adapters/browser/linkedin.md](./docs/adapters/browser/linkedin.md)
+- 发版清单：[docs/developer/releasing.md](./docs/developer/releasing.md)
 
 ## 本地开发
 

@@ -45,14 +45,14 @@ jobs:
       - name: Create Extension ZIP
         run: |
           cd extension-package
-          zip -r ../opencli-extension.zip .
+          zip -r ../huntertools-extension.zip .
 
       - name: Upload Artifacts (Action Run)
         uses: actions/upload-artifact@v7
         with:
-          name: opencli-extension-build
+          name: huntertools-extension-build
           path: |
-            opencli-extension.zip
+            huntertools-extension.zip
           retention-days: 7
 
       - name: Attach to GitHub Release
@@ -60,7 +60,7 @@ jobs:
         uses: softprops/action-gh-release@v2.6.1
         with:
           files: |
-            opencli-extension.zip
+            huntertools-extension.zip
           draft: false
           prerelease: false
         env:
