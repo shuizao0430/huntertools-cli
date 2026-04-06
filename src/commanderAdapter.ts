@@ -97,6 +97,7 @@ export function registerCommandToProgram(siteCmd: Command, cmd: CliCommand): voi
 
       const verbose = optionsRecord.verbose === true;
       let format = typeof optionsRecord.format === 'string' ? optionsRecord.format : 'table';
+      kwargs.format = format;
       if (verbose) {
         process.env.OPENCLI_VERBOSE = '1';
         process.env.HUNTERTOOLS_VERBOSE = '1';
@@ -122,7 +123,7 @@ export function registerCommandToProgram(siteCmd: Command, cmd: CliCommand): voi
       }
       renderOutput(result, {
         fmt: format,
-        columns: resolved.columns,
+        columns: resolved.resolveColumns?.(kwargs, result) ?? resolved.columns,
         title: `${resolved.site}/${resolved.name}`,
         elapsed: (Date.now() - startTime) / 1000,
         source: fullName(resolved),

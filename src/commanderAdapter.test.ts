@@ -151,7 +151,7 @@ describe('commanderAdapter command aliases', () => {
 
     await program.parseAsync(['node', 'opencli', 'notebooklm', 'metadata']);
 
-    expect(mockExecuteCommand).toHaveBeenCalledWith(cmd, {}, false);
+    expect(mockExecuteCommand).toHaveBeenCalledWith(cmd, { format: 'table' }, false);
   });
 });
 
@@ -198,6 +198,47 @@ describe('commanderAdapter default formats', () => {
     expect(mockRenderOutput).toHaveBeenCalledWith(
       [{ response: 'hello' }],
       expect.objectContaining({ fmt: 'json' }),
+    );
+  });
+});
+
+describe('commanderAdapter dynamic columns', () => {
+  const cmd: CliCommand = {
+    site: 'linkedin',
+    name: 'people-search',
+    description: 'Search people',
+    browser: false,
+    args: [
+      { name: 'query', positional: true, required: true, help: 'Query' },
+    ],
+    columns: ['summary'],
+    resolveColumns: (kwargs) => kwargs.format === 'csv' ? ['expanded_a', 'expanded_b'] : ['summary'],
+    func: vi.fn(),
+  };
+
+  beforeEach(() => {
+    mockExecuteCommand.mockReset();
+    mockExecuteCommand.mockResolvedValue([{ expanded_a: 'A', expanded_b: 'B' }]);
+    mockRenderOutput.mockReset();
+    delete process.env.OPENCLI_VERBOSE;
+    process.exitCode = undefined;
+  });
+
+  it('passes the selected format into kwargs and uses resolveColumns at render time', async () => {
+    const program = new Command();
+    const siteCmd = program.command('linkedin');
+    registerCommandToProgram(siteCmd, cmd);
+
+    await program.parseAsync(['node', 'opencli', 'linkedin', 'people-search', 'ai recruiter', '--format', 'csv']);
+
+    expect(mockExecuteCommand).toHaveBeenCalledWith(
+      cmd,
+      expect.objectContaining({ query: 'ai recruiter', format: 'csv' }),
+      false,
+    );
+    expect(mockRenderOutput).toHaveBeenCalledWith(
+      [{ expanded_a: 'A', expanded_b: 'B' }],
+      expect.objectContaining({ columns: ['expanded_a', 'expanded_b'], fmt: 'csv' }),
     );
   });
 });

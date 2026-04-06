@@ -219,6 +219,348 @@ export function normalizeWhitespace(value: unknown): string {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
 }
 
+const RECRUITER_PROFILE_HISTORY_NOISE = new Set([
+  '已添加简历进行完善',
+  '简历中的亮点信息',
+  '展开',
+  '收起',
+  '查看更多',
+  'show more',
+  'show less',
+  'job title',
+  'company name',
+  'company',
+  'school name',
+  'degree details',
+  'degree name',
+]);
+
+const RECRUITER_WORK_HISTORY_LABELS = {
+  title: new Set(['职位名称', 'job title', 'title']),
+  company: new Set(['公司名称', 'company name', 'company']),
+};
+
+const RECRUITER_EDUCATION_LABELS = {
+  school: new Set(['学校名称', 'school name', 'school']),
+  degree: new Set(['学位名称', 'degree name', 'degree']),
+  detail: new Set(['学位详情', 'degree details']),
+};
+
+const RECRUITER_MULTI_ENTRY_SECTIONS = new Set(['experience', 'education']);
+
+const RECRUITER_WORK_DURATION_LABELS = new Set([
+  '鑱屼綔鏃堕棿',
+  'employment dates',
+  'dates employed',
+  'duration',
+]);
+
+const RECRUITER_WORK_EMPLOYMENT_TYPE_LABELS = new Set([
+  '鑱屼綔绫诲瀷',
+  'employment type',
+  'job type',
+]);
+
+interface RecruiterWorkHistoryExtractionOptions {
+  currentCompany?: string;
+  currentTitle?: string;
+}
+
+interface RecruiterWorkHistoryDraftEntry {
+  title: string;
+  company: string;
+  duration: string;
+  employmentType: string;
+  extras: string[];
+}
+
+function normalizeHistoryToken(value: unknown): string {
+  return normalizeWhitespace(value).toLowerCase();
+}
+
+function normalizeRecruiterProfileSectionLines(
+  lines: string[],
+  preserveRepeats = false,
+): string[] {
+  const normalized = lines
+    .map(line => normalizeWhitespace(line))
+    .filter(Boolean);
+  return preserveRepeats ? normalized : [...new Set(normalized)];
+}
+
+function mergeRecruiterProfileSectionLines(
+  sectionKey: string,
+  existing: string[],
+  incoming: string[],
+): string[] {
+  const preserveRepeats = RECRUITER_MULTI_ENTRY_SECTIONS.has(sectionKey);
+  const next = preserveRepeats ? [...existing, ...incoming] : [...existing, ...incoming];
+  return normalizeRecruiterProfileSectionLines(next, preserveRepeats);
+}
+
+function isRecruiterProfileHistoryNoise(line: string): boolean {
+  const normalized = normalizeHistoryToken(line);
+  if (!normalized) return true;
+  if (RECRUITER_PROFILE_HISTORY_NOISE.has(normalized)) return true;
+  return /^(?:职位简介|招聘日期|工作地点|职位招聘状况|employment dates|location)$/i.test(normalized);
+}
+
+function nextRecruiterProfileValue(lines: string[], startIndex: number, labelSet: Set<string>): string {
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    const value = normalizeWhitespace(lines[index]);
+    const normalized = normalizeHistoryToken(value);
+    if (!normalized) continue;
+    if (labelSet.has(normalized)) continue;
+    if (isRecruiterProfileHistoryNoise(value)) continue;
+    return value;
+  }
+  return '';
+}
+
+function dedupeRecruiterEntryParts(parts: string[]): string[] {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const part of parts.map(value => normalizeWhitespace(value)).filter(Boolean)) {
+    const normalized = normalizeHistoryToken(part).replace(/[•|]/g, '').trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    deduped.push(part);
+  }
+  return deduped;
+}
+
+function titlesLookCompatible(left: string, right: string): boolean {
+  const normalize = (value: string) => normalizeWhitespace(value)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+  const a = normalize(left);
+  const b = normalize(right);
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
+}
+
+function normalizeRecruiterEmploymentType(value: string): string {
+  return normalizeWhitespace(value);
+}
+
+function looksLikeRecruiterDuration(value: string): boolean {
+  const normalized = normalizeWhitespace(value).toLowerCase();
+  return /\b(?:\d{4}|present|current|yr|yrs|year|years|mo|mos|month|months)\b/.test(normalized)
+    || /[·•]/.test(normalized) && /\d/.test(normalized);
+}
+
+function looksLikeRecruiterCompanyHint(value: string): boolean {
+  const normalized = normalizeWhitespace(value);
+  if (!normalized) return false;
+  if (looksLikeRecruiterDuration(normalized)) return false;
+  if (/^(?:full[- ]?time|part[- ]?time|contract|internship|鍏ㄨ亴|鍏艰亴|鍚堝悓|瀹炰範)$/i.test(normalized)) return false;
+  if (/@/.test(normalized)) return false;
+  if (/\b(?:led|driving|built|building|managed|managing|responsible|owning|supporting|expansion|across|team|teams)\b/i.test(normalized)) {
+    return false;
+  }
+  if (/[.!?]/.test(normalized)) return false;
+  if (/\b(?:manager|director|engineer|recruiter|vice president|chief|founder|co[- ]founder|cto|vp)\b/i.test(normalized)) {
+    return false;
+  }
+  return /(?:group|inc|llc|ltd|limited|corp|corporation|company|technologies|technology|labs|lab|systems|studio|university|amazon|google|meta|alibaba|lazada|yojee|antler|oracle|razorpay|carousell|needl)/i.test(normalized)
+    || /^[A-Z][A-Za-z0-9&.,()' -]{1,80}$/.test(normalized);
+}
+
+function inferRecruiterCompanyFromWorkExtras(extras: string[], title: string, duration: string, employmentType: string): string {
+  const blocked = new Set(
+    [title, duration, employmentType]
+      .map(value => normalizeHistoryToken(value))
+      .filter(Boolean),
+  );
+  for (const extra of extras.map(value => normalizeWhitespace(value)).filter(Boolean)) {
+    const normalized = normalizeHistoryToken(extra);
+    if (!normalized || blocked.has(normalized)) continue;
+    if (looksLikeRecruiterCompanyHint(extra)) return extra;
+  }
+  return '';
+}
+
+function formatRecruiterExperienceEntry(
+  title: string,
+  company: string,
+  duration = '',
+  employmentType = '',
+): string {
+  const safeTitle = normalizeWhitespace(title);
+  const safeCompany = normalizeWhitespace(company);
+  const head = safeTitle && safeCompany
+    ? `${safeTitle} @ ${safeCompany}`
+    : safeTitle || safeCompany;
+  const extras = [
+    normalizeWhitespace(duration),
+    normalizeRecruiterEmploymentType(employmentType),
+  ].filter(Boolean);
+  return [head, ...extras].filter(Boolean).join(' | ');
+}
+
+function formatRecruiterEducationEntry(school: string, degree: string, detail: string): string {
+  const parts = dedupeRecruiterEntryParts([school, degree, detail]);
+  return parts.join(' | ');
+}
+
+export function extractRecruiterProfileHistoryItems(
+  value: unknown,
+  kind: 'work' | 'education',
+  maxItems = 5,
+  options: RecruiterWorkHistoryExtractionOptions = {},
+): string[] {
+  const lines = String(value ?? '')
+    .split(/\r?\n+/)
+    .map(line => normalizeWhitespace(line))
+    .filter(Boolean);
+  if (lines.length === 0) return [];
+
+  if (kind === 'work') {
+    const workLabelSet = new Set([
+      ...RECRUITER_WORK_HISTORY_LABELS.title,
+      ...RECRUITER_WORK_HISTORY_LABELS.company,
+      ...RECRUITER_WORK_DURATION_LABELS,
+      ...RECRUITER_WORK_EMPLOYMENT_TYPE_LABELS,
+    ]);
+    const entries: RecruiterWorkHistoryDraftEntry[] = [];
+    let pendingTitle = '';
+    let pendingCompany = '';
+    let pendingDuration = '';
+    let pendingEmploymentType = '';
+    let pendingExtras: string[] = [];
+    let pendingField: 'title' | 'company' | 'duration' | 'employmentType' | '' = '';
+    const flush = () => {
+      if (!(pendingTitle || pendingCompany || pendingDuration || pendingEmploymentType)) return;
+      entries.push({
+        title: normalizeWhitespace(pendingTitle),
+        company: normalizeWhitespace(pendingCompany),
+        duration: normalizeWhitespace(pendingDuration),
+        employmentType: normalizeWhitespace(pendingEmploymentType),
+        extras: [...pendingExtras],
+      });
+      pendingTitle = '';
+      pendingCompany = '';
+      pendingDuration = '';
+      pendingEmploymentType = '';
+      pendingExtras = [];
+      pendingField = '';
+    };
+
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      const normalized = normalizeHistoryToken(line);
+      if (RECRUITER_WORK_HISTORY_LABELS.title.has(normalized)) {
+        if (pendingTitle || pendingCompany || pendingDuration || pendingEmploymentType) flush();
+        pendingField = 'title';
+      } else if (RECRUITER_WORK_HISTORY_LABELS.company.has(normalized)) {
+        pendingField = 'company';
+      } else if (RECRUITER_WORK_DURATION_LABELS.has(normalized)) {
+        pendingField = 'duration';
+      } else if (RECRUITER_WORK_EMPLOYMENT_TYPE_LABELS.has(normalized)) {
+        pendingField = 'employmentType';
+      } else if (workLabelSet.has(normalized)) {
+        pendingField = '';
+      } else if (pendingField && !isRecruiterProfileHistoryNoise(line)) {
+        if (pendingField === 'title' && !pendingTitle) pendingTitle = line;
+        if (pendingField === 'company' && !pendingCompany) pendingCompany = line;
+        if (pendingField === 'duration' && !pendingDuration) pendingDuration = line;
+        if (pendingField === 'employmentType' && !pendingEmploymentType) pendingEmploymentType = line;
+        pendingField = '';
+      } else if (!pendingField && !isRecruiterProfileHistoryNoise(line)) {
+        pendingExtras.push(line);
+      }
+    }
+    if (pendingTitle || pendingCompany || pendingDuration || pendingEmploymentType) flush();
+    if (entries.length > 0) {
+      const currentCompany = normalizeWhitespace(options.currentCompany);
+      const currentTitle = normalizeWhitespace(options.currentTitle);
+      for (const entry of entries) {
+        if (!entry.company) {
+          entry.company = inferRecruiterCompanyFromWorkExtras(
+            entry.extras,
+            entry.title,
+            entry.duration,
+            entry.employmentType,
+          );
+        }
+      }
+      if (entries[0] && currentCompany && currentTitle && titlesLookCompatible(entries[0].title, currentTitle)) {
+        if (!entries[0].company || !titlesLookCompatible(entries[0].company, currentCompany)) {
+          entries[0].company = currentCompany;
+        }
+      }
+      return entries
+        .map((entry) => formatRecruiterExperienceEntry(
+          entry.title,
+          entry.company,
+          entry.duration,
+          entry.employmentType,
+        ))
+        .filter(Boolean)
+        .slice(0, maxItems);
+    }
+  }
+
+  if (kind === 'education') {
+    const educationLabelSet = new Set([
+      ...RECRUITER_EDUCATION_LABELS.school,
+      ...RECRUITER_EDUCATION_LABELS.degree,
+      ...RECRUITER_EDUCATION_LABELS.detail,
+    ]);
+    const entries: string[] = [];
+    let pendingSchool = '';
+    let pendingDegree = '';
+    let pendingDetail = '';
+    let pendingField: 'school' | 'degree' | 'detail' | '' = '';
+    const flush = () => {
+      const entry = formatRecruiterEducationEntry(pendingSchool, pendingDegree, pendingDetail);
+      if (entry) entries.push(entry);
+      pendingSchool = '';
+      pendingDegree = '';
+      pendingDetail = '';
+      pendingField = '';
+    };
+
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      const normalized = normalizeHistoryToken(line);
+      if (RECRUITER_EDUCATION_LABELS.school.has(normalized)) {
+        if (pendingSchool || pendingDegree || pendingDetail) flush();
+        pendingField = 'school';
+      } else if (RECRUITER_EDUCATION_LABELS.degree.has(normalized)) {
+        pendingField = 'degree';
+      } else if (RECRUITER_EDUCATION_LABELS.detail.has(normalized)) {
+        pendingField = 'detail';
+      } else if (educationLabelSet.has(normalized)) {
+        pendingField = '';
+      } else if (pendingField && !isRecruiterProfileHistoryNoise(line)) {
+        if (pendingField === 'school' && !pendingSchool) pendingSchool = line;
+        if (pendingField === 'degree' && !pendingDegree) pendingDegree = line;
+        if (pendingField === 'detail' && !pendingDetail) pendingDetail = line;
+        pendingField = '';
+      }
+    }
+    if (pendingSchool || pendingDegree || pendingDetail) flush();
+    if (entries.length > 0) return entries.slice(0, maxItems);
+  }
+
+  return lines
+    .filter(line => !isRecruiterProfileHistoryNoise(line))
+    .slice(0, maxItems);
+}
+
+function sanitizeRecruiterCandidateProfile(profile: RecruiterCandidateProfile): RecruiterCandidateProfile {
+  return {
+    ...profile,
+    work_history: extractRecruiterProfileHistoryItems(profile.work_history, 'work', 5, {
+      currentCompany: profile.current_company,
+      currentTitle: profile.current_title,
+    }).join('\n'),
+    education: extractRecruiterProfileHistoryItems(profile.education, 'education').join('\n'),
+  };
+}
+
 function describeRecruiterProjectChooserBlocker(options: {
   stageButtons: string[];
   visibleButtons: string[];
@@ -2017,34 +2359,53 @@ function extractRecruiterProfileInPage(candidateIdHint: string, listSource: stri
   ]);
   const isActionLine = (value: string) => /^(?:添加邮箱|添加电话号码|公开档案|更改阶段|归档|发消息给|分享.+获取评价|message|inmail|save to project|add tag|add note)/i.test(normalize(value));
   const isMetaLine = (value: string) => /(?:^|\s)(?:1st|2nd|3rd)(?:\s|$)|\d+\s*度人脉|\d+\s*度|mutual connection|共同联系人|recently active|近期活跃|项目\s*\(\d+\)|messages?\s*\(\d+\)|inmail/i.test(normalize(value));
+  const rawBodyLines = String((document.body as HTMLElement).innerText || '')
+    .split('\n')
+    .map(line => normalize(line))
+    .filter(Boolean);
+  const textLines = uniq(rawBodyLines);
+  const isMultiEntrySection = (sectionKey: string) => sectionKey === 'experience' || sectionKey === 'education';
   const readSections = () => {
     const sections = new Map<string, string[]>();
     const roots = Array.from(document.querySelectorAll('section, article'));
     for (const root of roots) {
-      const rootLines = uniq(String((root as HTMLElement).innerText || '').split('\n'));
+      const rootLinesRaw = String((root as HTMLElement).innerText || '')
+        .split('\n')
+        .map(line => normalize(line))
+        .filter(Boolean);
+      const rootLines = uniq(rootLinesRaw);
       if (rootLines.length === 0) continue;
       const explicitHeading = normalize(root.querySelector('h1, h2, h3, h4, header, [role="heading"]')?.textContent || '');
       const headingLine = explicitHeading || rootLines.find(line => headingAliases.has(normalizeHeading(line))) || '';
       const sectionKey = headingAliases.get(normalizeHeading(headingLine));
       if (!sectionKey) continue;
-      const lines = uniq(rootLines.filter(line => normalizeHeading(line) !== normalizeHeading(headingLine)));
-      if (lines.length > 0) sections.set(sectionKey, lines);
+      const preserveRepeats = isMultiEntrySection(sectionKey);
+      const sourceLines = preserveRepeats ? rootLinesRaw : rootLines;
+      const lines = preserveRepeats
+        ? sourceLines.filter(line => normalizeHeading(line) !== normalizeHeading(headingLine))
+        : uniq(sourceLines.filter(line => normalizeHeading(line) !== normalizeHeading(headingLine)));
+      if (lines.length > 0) {
+        const existing = sections.get(sectionKey) || [];
+        const merged = preserveRepeats ? [...existing, ...lines] : uniq([...existing, ...lines]);
+        sections.set(sectionKey, merged);
+      }
     }
     return sections;
   };
-  const textLines = uniq(String((document.body as HTMLElement).innerText || '').split('\n'));
   const sections = readSections();
-  const readBodySection = (aliases: string[]) => {
+  const readBodySection = (aliases: string[], options?: { preserveRepeats?: boolean }) => {
+    const preserveRepeats = Boolean(options?.preserveRepeats);
     const normalizedAliases = aliases.map(alias => normalizeHeading(alias));
-    const startIndex = textLines.findIndex(line => normalizedAliases.includes(normalizeHeading(line)));
+    const sourceLines = preserveRepeats ? rawBodyLines : textLines;
+    const startIndex = sourceLines.findIndex(line => normalizedAliases.includes(normalizeHeading(line)));
     if (startIndex < 0) return [];
     const lines: string[] = [];
-    for (let index = startIndex + 1; index < textLines.length; index += 1) {
-      const line = textLines[index];
+    for (let index = startIndex + 1; index < sourceLines.length; index += 1) {
+      const line = sourceLines[index];
       if (headingAliases.has(normalizeHeading(line))) break;
       lines.push(line);
     }
-    return uniq(lines);
+    return preserveRepeats ? lines.map(line => normalize(line)).filter(Boolean) : uniq(lines);
   };
   const documentTitle = normalize(document.title).replace(/\s*\|\s*LinkedIn.*$/i, '');
   const fallbackName = textLines.find((line) => {
@@ -2095,8 +2456,8 @@ function extractRecruiterProfileInPage(candidateIdHint: string, listSource: stri
     || ''
   );
   const aboutLines = sections.get('about') || readBodySection(['about', 'summary', '摘要']);
-  const workHistoryLines = sections.get('experience') || readBodySection(['experience', 'work experience', '工作经历']);
-  const educationLines = sections.get('education') || readBodySection(['education', '教育经历']);
+  const workHistoryLines = sections.get('experience') || readBodySection(['experience', 'work experience', '工作经历'], { preserveRepeats: true });
+  const educationLines = sections.get('education') || readBodySection(['education', '教育经历'], { preserveRepeats: true });
   const skillLines = sections.get('skills') || readBodySection(['skills', '技能']);
   const languageLines = sections.get('languages') || readBodySection(['languages', 'language proficiency', '语言']);
   const activityLines = sections.get('activity') || readBodySection(['recent activity', '近期动态', '最近动态']);
@@ -4149,7 +4510,8 @@ export async function extractRecruiterProfile(
   listSource = 'profile',
 ): Promise<RecruiterCandidateProfile> {
   for (let attempt = 0; attempt < 4; attempt++) {
-    const profile = await page.evaluate(buildPageEval(extractRecruiterProfileInPage, candidateId, listSource));
+    const rawProfile = await page.evaluate(buildPageEval(extractRecruiterProfileInPage, candidateId, listSource));
+    const profile = rawProfile ? sanitizeRecruiterCandidateProfile(rawProfile as RecruiterCandidateProfile) : null;
     const name = normalizeWhitespace(profile?.name);
     const hasMeaningfulDetails = Boolean(
       normalizeWhitespace(profile?.headline)
@@ -4593,6 +4955,9 @@ export const __test__ = {
   buildRecruiterFollowUpQueue,
   toRecruiterFollowUpTemplateContext,
   renderRecruiterFollowUpTemplate,
+  normalizeRecruiterProfileSectionLines,
+  mergeRecruiterProfileSectionLines,
+  extractRecruiterProfileHistoryItems,
   getRecruiterFollowUpFieldValue,
   presetRecruiterFollowUpExportFields,
   normalizeRecruiterFollowUpFieldMappings,

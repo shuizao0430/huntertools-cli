@@ -87,6 +87,19 @@ describe('cli() registration', () => {
     expect(cmd.defaultFormat).toBe('plain');
     expect(getRegistry().get('test-registry/plain-default')?.defaultFormat).toBe('plain');
   });
+
+  it('preserves resolveColumns on the registered command', () => {
+    const resolveColumns = () => ['a', 'b'];
+    const cmd = cli({
+      site: 'test-registry',
+      name: 'dynamic-columns',
+      description: 'resolves columns at render time',
+      resolveColumns,
+    });
+
+    expect(cmd.resolveColumns).toBe(resolveColumns);
+    expect(getRegistry().get('test-registry/dynamic-columns')?.resolveColumns).toBe(resolveColumns);
+  });
 });
 
 describe('fullName', () => {

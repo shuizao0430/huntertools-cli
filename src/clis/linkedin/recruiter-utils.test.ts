@@ -31,6 +31,9 @@ const {
   summarizeRecruiterInboxStats,
   buildRecruiterFollowUpQueue,
   renderRecruiterFollowUpTemplate,
+  extractRecruiterProfileHistoryItems,
+  normalizeRecruiterProfileSectionLines,
+  mergeRecruiterProfileSectionLines,
   presetRecruiterFollowUpExportFields,
   normalizeRecruiterFollowUpFieldMappings,
   exportRecruiterFollowUpQueue,
@@ -196,6 +199,206 @@ describe('linkedin recruiter utils', () => {
       company: 'Data Concepts',
       title: 'Technical Recruiter',
     });
+  });
+
+  it('extracts structured work and education history items from recruiter label blocks', () => {
+    expect(extractRecruiterProfileHistoryItems([
+      '职位名称',
+      'Fractional CTO | Technology Advisor & Startup Growth',
+      '公司名称',
+      'IT ART LLC',
+    ].join('\n'), 'work')).toEqual([
+      'Fractional CTO | Technology Advisor & Startup Growth @ IT ART LLC',
+    ]);
+
+    expect(extractRecruiterProfileHistoryItems([
+      '学校名称',
+      '英国利物浦大学',
+      '学位详情',
+      'Master’s Degree •',
+      '学位名称',
+      'Computer Science',
+    ].join('\n'), 'education')).toEqual([
+      '英国利物浦大学 | Computer Science | Master’s Degree •',
+    ]);
+  });
+
+  it('deduplicates repeated education degree text while keeping school-only entries', () => {
+    expect(extractRecruiterProfileHistoryItems([
+      'school name',
+      'International Institute of Information Technology Bangalore',
+      'degree name',
+      'M.Tech',
+      'degree details',
+      'M.Tech',
+      'school name',
+      'Chinmaya Vidyalaya',
+    ].join('\n'), 'education')).toEqual([
+      'International Institute of Information Technology Bangalore | M.Tech',
+      'Chinmaya Vidyalaya',
+    ]);
+  });
+
+  it('preserves repeated labels for experience and education section collection', () => {
+    expect(normalizeRecruiterProfileSectionLines([
+      '职位名称',
+      'VP Engineering',
+      '职位名称',
+      'Director of Engineering',
+    ], true)).toEqual([
+      '职位名称',
+      'VP Engineering',
+      '职位名称',
+      'Director of Engineering',
+    ]);
+
+    expect(normalizeRecruiterProfileSectionLines([
+      'About',
+      'About',
+      'Builder',
+    ], false)).toEqual([
+      'About',
+      'Builder',
+    ]);
+  });
+
+  it('merges repeated section roots by appending multi-entry sections instead of overwriting them', () => {
+    expect(mergeRecruiterProfileSectionLines(
+      'experience',
+      ['职位名称', 'VP Engineering', '公司名称', 'Lazada'],
+      ['职位名称', 'Director of Engineering', '公司名称', 'Alibaba'],
+    )).toEqual([
+      '职位名称',
+      'VP Engineering',
+      '公司名称',
+      'Lazada',
+      '职位名称',
+      'Director of Engineering',
+      '公司名称',
+      'Alibaba',
+    ]);
+
+    expect(mergeRecruiterProfileSectionLines(
+      'about',
+      ['Builder'],
+      ['Builder', 'Operator'],
+    )).toEqual([
+      'Builder',
+      'Operator',
+    ]);
+  });
+
+  it('can extract multiple history entries when repeated labels are preserved', () => {
+    expect(extractRecruiterProfileHistoryItems([
+      '职位名称',
+      'VP Engineering',
+      '公司名称',
+      'Lazada',
+      '职位名称',
+      'Director of Engineering',
+      '公司名称',
+      'Alibaba',
+    ].join('\n'), 'work')).toEqual([
+      'VP Engineering @ Lazada',
+      'Director of Engineering @ Alibaba',
+    ]);
+
+    expect(extractRecruiterProfileHistoryItems([
+      '学校名称',
+      '英国利物浦大学',
+      '学位名称',
+      'Computer Science',
+      '学位详情',
+      'Master’s Degree •',
+      '学校名称',
+      '武汉大学',
+      '学位名称',
+      'Mechanical Engineering',
+      '学位详情',
+      'Bachelor’s Degree •',
+    ].join('\n'), 'education')).toEqual([
+      '英国利物浦大学 | Computer Science | Master’s Degree •',
+      '武汉大学 | Mechanical Engineering | Bachelor’s Degree •',
+    ]);
+  });
+
+  it('formats work history with duration and employment type when labels are present', () => {
+    expect(extractRecruiterProfileHistoryItems([
+      'job title',
+      'Chief Technology Officer',
+      'company name',
+      'Yojee',
+      'employment dates',
+      '2022 - 2024 · 2 yrs',
+      'employment type',
+      'Full-time',
+    ].join('\n'), 'work')).toEqual([
+      'Chief Technology Officer @ Yojee | 2022 - 2024 · 2 yrs | Full-time',
+    ]);
+  });
+
+  it('backfills the first missing work-history company from the current role only when titles match', () => {
+    expect(extractRecruiterProfileHistoryItems([
+      'job title',
+      'Regional VP, Crossborder Logistics & LEX',
+      'employment dates',
+      '2021 - Present · 4 yrs',
+      'employment type',
+      'Full-time',
+      'job title',
+      'Regional Senior Manager, Crossborder',
+      'company name',
+      'Amazon',
+    ].join('\n'), 'work', 5, {
+      currentCompany: 'Lazada Group',
+      currentTitle: 'Regional VP, Crossborder Logistics & LEX',
+    })).toEqual([
+      'Regional VP, Crossborder Logistics & LEX @ Lazada Group | 2021 - Present · 4 yrs | Full-time',
+      'Regional Senior Manager, Crossborder @ Amazon',
+    ]);
+  });
+
+  it('fills a later missing work-history company from unlabeled text inside the same block', () => {
+    expect(extractRecruiterProfileHistoryItems([
+      'job title',
+      'Regional Senior Manager, Crossborder',
+      'Amazon',
+      'employment dates',
+      '2018 - 2021 · 3 yrs',
+    ].join('\n'), 'work')).toEqual([
+      'Regional Senior Manager, Crossborder @ Amazon | 2018 - 2021 · 3 yrs',
+    ]);
+  });
+
+  it('keeps later work-history entries blank when the block has no trustworthy company hint', () => {
+    expect(extractRecruiterProfileHistoryItems([
+      'job title',
+      'Regional Senior Manager, Crossborder',
+      'Led crossborder expansion across APAC',
+      'employment dates',
+      '2018 - 2021 · 3 yrs',
+    ].join('\n'), 'work')).toEqual([
+      'Regional Senior Manager, Crossborder | 2018 - 2021 · 3 yrs',
+    ]);
+  });
+
+  it('prefers the current-role company when the first matching title is paired with a stale company', () => {
+    expect(extractRecruiterProfileHistoryItems([
+      'job title',
+      'Regional VP, Crossborder Logistics & LEX',
+      'company name',
+      'Amazon',
+      'job title',
+      'Regional Senior Manager, Crossborder',
+      'company name',
+      'Amazon',
+    ].join('\n'), 'work', 5, {
+      currentCompany: 'Lazada Group',
+      currentTitle: 'Regional VP, Crossborder Logistics & LEX',
+    })).toEqual([
+      'Regional VP, Crossborder Logistics & LEX @ Lazada Group',
+      'Regional Senior Manager, Crossborder @ Amazon',
+    ]);
   });
 
   it('deduplicates candidates by candidate_id', () => {

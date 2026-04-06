@@ -64,6 +64,8 @@ export interface CliCommand {
   navigateBefore?: boolean | string;
   /** Override the default CLI output format when the user does not pass -f/--format. */
   defaultFormat?: 'table' | 'plain' | 'json' | 'yaml' | 'yml' | 'md' | 'markdown' | 'csv';
+  /** Resolve render columns from kwargs/result when a static column list is not sufficient. */
+  resolveColumns?: (kwargs: CommandArgs, result: unknown) => string[] | undefined;
 }
 
 /** Internal extension for lazy-loaded TS modules (not exposed in public API) */
@@ -108,6 +110,7 @@ export function cli(opts: CliOptions): CliCommand {
     replacedBy: opts.replacedBy,
     navigateBefore: opts.navigateBefore,
     defaultFormat: opts.defaultFormat,
+    resolveColumns: opts.resolveColumns,
   };
 
   registerCommand(cmd);
